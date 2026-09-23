@@ -139,10 +139,10 @@ def regexLine(line):
     re_filter = re.compile(r"^\/\/\s?(.+)$")  # Regex for "// Comments"
     re_results = re_filter.search(line.strip())
     try:
-        comment = re_results.group().replace("//", "").strip()
+        comment = re_results.group(1).strip()
         if debugMode:
             print("New comment found: " + comment)
-            addComment(comment)
+        addComment(comment)
         return
     except AttributeError:
         pass
