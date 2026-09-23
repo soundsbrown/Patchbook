@@ -1,5 +1,52 @@
 ![Patchbook Logo](/Images/patchbook-logo.jpg)
 
+# About this fork:
+
+This is a fork of PatchBook by [Spektro Audio](http://spektroaudio.com/), adding
+D2 diagram output and fixing some parser bugs. Everything from *About PatchBook*
+onwards is the original documentation.
+
+## Added: D2 output
+
+A **-d2** command that emits [D2](https://d2lang.com) source, alongside the
+existing Graphviz output:
+
+```
+python3 path/to/script/patchbook.py -file /path/to/patch.pb -d2 > patch.d2
+d2 --layout=elk patch.d2 patch.svg
+```
+
+Modules are ordered by signal flow (sources first, sinks last) rather than by
+the order they appear in the file, and patches containing feedback loops fall
+back to file order rather than failing. Connections are emitted in source-file
+order, so the output is stable and diffable across runs.
+
+Connection types are colour-coded, port names are rendered on the arrowheads,
+and the root fill is transparent so diagrams sit on a page background.
+
+Diagrams flow left-to-right by default, but switch to top-to-bottom at 10 or
+more modules, where left-to-right gets unmanageably wide. **-dir DN** forces
+top-to-bottom regardless of size.
+
+## Fixed: parser bugs
+
+- **The last connection of a file with no trailing newline was silently
+  dropped.** The connections regex requires whitespace after the closing
+  parenthesis, which the end of the file does not provide. Nothing was
+  reported -- the module and its connection were simply absent from the output.
+- **Voice headings with leading or trailing whitespace went undetected**, so
+  connections below them stayed attributed to the previous voice.
+- **Graphviz node identifiers kept hyphens and slashes.** Only spaces were
+  stripped, so module names like `Ultra-Perc` or `A/B Mix` produced identifiers
+  that are not valid unquoted dot, breaking the rendered graph.
+- **Patch comments were never recorded outside debug mode**, because
+  `addComment()` sat inside an `if debugMode:` block. This made the comment
+  output of every emitter dead code in normal use.
+- **Comment text had every `//` stripped**, not just the leading marker, which
+  mangled any URL in a comment.
+
+---
+
 # About PatchBook:
 
 PatchBook is a markup language and parser for writing and distributing patches for modular synthesizers created by [Spektro Audio](http://spektroaudio.com/).
