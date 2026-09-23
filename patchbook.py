@@ -150,7 +150,7 @@ def regexLine(line):
     if debugMode:
         print("Cheking input for voices...")
     re_filter = re.compile(r"^(.+)\:$")  # Regex for "VOICE 1:"
-    re_results = re_filter.search(line)
+    re_results = re_filter.search(line.strip())
     try:
         # For some reason the Regex filter was still detecting parameter declarations as voices,
         # so I'm also running the results through an if statement.
