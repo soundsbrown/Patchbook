@@ -55,6 +55,8 @@ parser.add_argument("-connections", action="store_const", const="connections", d
                     help="Print connections")
 parser.add_argument("-graph", action="store_const", const="graph", dest="command",
                     help="Print dot code for graph")
+parser.add_argument("-d2", action="store_const", const="d2", dest="command",
+                    help="Print D2 code for diagram")
 args = parser.parse_args()
 filename = args.file
 debugMode = args.debug
@@ -367,6 +369,8 @@ def askCommand(command=None):
         printConnections()
     elif command == "graph":
         graphviz()
+    elif command == "d2":
+        d2()
     else:
         print("Invalid command, please try again.")
 
@@ -561,6 +565,159 @@ def graphviz():
     if not quiet:
         print("-------------------------")
         print()
+    return total_string
+
+
+def topological_sort(modules):
+    """Sort modules so that sources come first and sinks come last.
+    Falls back gracefully on cycles by breaking the least-recently-added edge."""
+    # Build adjacency list from connections
+    successors = {m: set() for m in modules}
+    predecessors = {m: set() for m in modules}
+    for module in modules:
+        outputs = modules[module]["connections"]["out"]
+        for port in outputs:
+            for c in outputs[port]:
+                target = c["input_module"]
+                if target in modules:
+                    successors[module].add(target)
+                    predecessors[target].add(module)
+
+    # Kahn's algorithm
+    in_degree = {m: len(predecessors[m]) for m in modules}
+    queue = [m for m in modules if in_degree[m] == 0]
+    # Sort the initial queue by first appearance (lowest connection ID touching the module)
+    def first_id(m):
+        ids = []
+        for port in modules[m]["connections"]["out"]:
+            for c in modules[m]["connections"]["out"][port]:
+                ids.append(c["id"])
+        for port in modules[m]["connections"]["in"]:
+            ids.append(modules[m]["connections"]["in"][port]["id"])
+        return min(ids) if ids else 0
+    queue.sort(key=first_id)
+    result = []
+    while queue:
+        node = queue.pop(0)
+        result.append(node)
+        for succ in sorted(successors[node], key=first_id):
+            in_degree[succ] -= 1
+            if in_degree[succ] == 0:
+                queue.append(succ)
+    # If there are remaining nodes (cycles), append them sorted by first_id
+    remaining = [m for m in modules if m not in result]
+    remaining.sort(key=first_id)
+    result.extend(remaining)
+    return result
+
+
+def d2():
+    global quiet, direction
+    # D2 uses named colors or hex codes; "thick" is replaced with stroke-width and a color
+    linetypes = {
+        "audio": {"color": "#c5c2b8", "width": 3},
+        "cv": {"color": "#4CAF50"},
+        "gate": {"color": "#E57373"},
+        "trigger": {"color": "#FFB74D"},
+        "pitch": {"color": "#64B5F6"},
+        "clock": {"color": "#CE93D8"}
+    }
+
+    if not quiet:
+        print("Generating signal flow code for D2.")
+        print("Copy the code between the line breaks and paste it into https://play.d2lang.com/ to visualize.")
+
+    total_string = ""
+
+    if not quiet: print("-------------------------")
+
+    # D2 direction: auto-select based on complexity
+    # Complex patches (>=10 modules) flow top-to-bottom to avoid extreme width
+    # Simple patches (<10 modules) flow left-to-right
+    module_count = len(mainDict["modules"])
+    if direction == "DN":
+        direction_str = "down"
+    elif direction == "LR":
+        direction_str = "down" if module_count >= 10 else "right"
+    else:
+        direction_str = "right"
+    print(f"direction: {direction_str}")
+    total_string += f"direction: {direction_str}\n"
+
+    # Transparent background so diagrams blend with the page
+    print("style: {\n  fill: transparent\n}")
+    total_string += "style: {\n  fill: transparent\n}\n"
+
+    modules = mainDict["modules"]
+
+    # Sort modules in signal-flow order (sources first, sinks last)
+    sorted_modules = topological_sort(modules)
+
+    # Build a D2-safe identifier for each module
+    def node_id(module):
+        return re.sub(r'[^A-Za-z0-9_]', "", module)
+
+    # Build a module's label (uppercase name + parameters)
+    def module_label(module):
+        label = module.upper()
+        params = modules[module]["parameters"]
+        if params:
+            param_str = "\\n" + "\\n".join([f"{par}: {params[par]}" for par in sorted(params)])
+            label += param_str
+        return label
+
+    # Emit modules in topological order
+    for module in sorted_modules:
+        node_def = f'{node_id(module)}: "{module_label(module)}"'
+        print(node_def)
+        total_string += node_def + "\n"
+
+    # Collect all connections with their original IDs for ordering
+    conn = []
+    for module in modules:
+        outputs = modules[module]["connections"]["out"]
+        for out in outputs:
+            for c in outputs[out]:
+                # Build connection style
+                style_parts = []
+                conn_type_style = linetypes.get(c["connection_type"], {"color": "black"})
+                color = conn_type_style.get("color", "black")
+                style_parts.append(f'style.stroke: "{color}"')
+                if "width" in conn_type_style:
+                    style_parts.append(f"style.stroke-width: {conn_type_style['width']}")
+                if "style" in c:
+                    style_parts.append(f"style.{c['style']}")
+
+                from_node = node_id(module)
+                to_node = node_id(c["input_module"])
+
+                style_str = ""
+                if style_parts:
+                    style_str = "\n    " + "\n    ".join(style_parts)
+
+                connection_line = f"{from_node} -> {to_node} {{\n    source-arrowhead.label: {out}\n    target-arrowhead.label: {c['input_port']}{style_str}\n  }}"
+                conn.append((c["id"], connection_line))
+
+    # Sort connections by their original ID (source file order)
+    conn.sort(key=lambda x: x[0])
+    for _, c in conn:
+        print(c)
+        total_string += c + "\n"
+
+    # Add comments if any, as a single node. A line break inside a D2 label is
+    # the two-character escape "\n", not a real newline -- same as module_label.
+    if len(mainDict["comments"]) != 0:
+        escaped = [c.replace("\\", "\\\\").replace('"', '\\"')
+                   for c in mainDict["comments"]]
+        comment_lines = "\\n".join(escaped)
+        comments_block = f'comments: "PATCH COMMENTS\\n\\n{comment_lines}"'
+        print(comments_block)
+        total_string += comments_block + "\n"
+
+    if not quiet:
+        print("-------------------------")
+        print()
+
     return total_string
 
 
