@@ -107,12 +107,12 @@ def getFilePath(filename):
 def parseFile(filename):
     # This function reads the txt file and process each line.
     global quiet
-    lines = []
     try:
         if not quiet: print("Loading file: " + filename)
         with open(filename, "r") as file:
             for l in file:
-                lines.append(l)
+                if not l.endswith("\n"):
+                    l += "\n"
                 regexLine(l)
     except TypeError:
         print("ERROR. Please add text file path after the script.")
