@@ -169,8 +169,10 @@ def regexLine(line):
     # CHECK FOR CONNECTIONS
     if debugMode:
         print("Cheking input for connections...")
+    # The "(port)" after either module is optional; an omitted port leaves
+    # that end of the connection unlabeled.
     re_filter = re.compile(
-        r"\-\s(.+)[(](.+)[)]\s(\>\>|\-\>|[a-z]\>)\s(.+)[(](.+)[)]\s(\[.+\])?$")
+        r"\-\s(.+?)(?:\s*[(]([^()]*)[)])?\s(\>\>|\-\>|[a-z]\>)\s(.+?)(?:\s*[(]([^()]*)[)])?\s*(\[.+\])?\s*$")
     re_results = re_filter.search(line)
     try:
         results = re_results.groups()
@@ -258,7 +260,7 @@ def addConnection(list, voice="none"):
         print("-----")
 
     output_module = list[0].lower().strip()
-    output_port = list[1].lower().strip()
+    output_port = (list[1] or "").lower().strip()
 
     if debugMode:
         print("Output module: " + output_module)
@@ -273,7 +275,7 @@ def addConnection(list, voice="none"):
         connection_type = "cv"
 
     input_module = list[3].lower().strip()
-    input_port = list[4].lower().strip()
+    input_port = (list[4] or "").lower().strip()
 
     if list[5] is not None:
         arguments = parseArguments(list[5])
@@ -282,10 +284,14 @@ def addConnection(list, voice="none"):
 
     if debugMode:
         print("Input module: " + input_module)
-        print("Input port: " + output_port)
+        print("Input port: " + input_port)
+
+    # An input port holds a single connection, so each unlabeled input gets
+    # its own key; the connection itself records the port as "".
+    input_key = input_port or unlabeledInputKey(connectionID)
 
     checkModuleExistance(output_module, output_port, "out")
-    checkModuleExistance(input_module, input_port, "in")
+    checkModuleExistance(input_module, input_key, "in")
 
     if debugMode:
         print("Appending output and input connections to mainDict...")
@@ -310,9 +316,25 @@ def addConnection(list, voice="none"):
 
     mainDict["modules"][output_module]["connections"]["out"][output_port].append(
         output_dict)
-    mainDict["modules"][input_module]["connections"]["in"][input_port] = input_dict
+    mainDict["modules"][input_module]["connections"]["in"][input_key] = input_dict
     if debugMode:
         print("-----")
+
+
+def unlabeledInputKey(id):
+    return "#" + str(id)
+
+
+def isLabeledPort(port):
+    # False for an unlabeled output ("") or input ("#<id>") port key.
+    return port != "" and not port.startswith("#")
+
+
+def moduleAndPort(module, port):
+    # "Module (Port)", or just "Module" for an unlabeled port.
+    if isLabeledPort(port):
+        return module.title() + " (" + port.title() + ")"
+    return module.title()
 
 
 def checkModuleExistance(module, port="port", direction=""):
@@ -386,8 +408,8 @@ def _print_module(module):
     print("Inputs:")
     for c in mainDict["modules"][module]["connections"]["in"]:
         keyvalue = mainDict["modules"][module]["connections"]["in"][c]
-        print(keyvalue["output_module"].title() + " (" + keyvalue["output_port"].title(
-        ) + ") > " + c.title() + " - " + keyvalue["connection_type"].title())
+        print(moduleAndPort(keyvalue["output_module"], keyvalue["output_port"]) + " > " +
+              (c.title() if isLabeledPort(c) else "(unlabeled)") + " - " + keyvalue["connection_type"].title())
     print()
 
     print("Outputs:")
@@ -395,8 +417,9 @@ def _print_module(module):
         port = mainDict["modules"][module]["connections"]["out"][x]
         for c in port:
             keyvalue = c
-            print(x.title() + " > " + keyvalue["input_module"].title() + " (" + keyvalue["input_port"].title(
-            ) + ") " + " - " + keyvalue["connection_type"].title() + " - " + keyvalue["voice"])
+            print((x.title() if isLabeledPort(x) else "(unlabeled)") + " > " +
+                  moduleAndPort(keyvalue["input_module"], keyvalue["input_port"]) + "  - " +
+                  keyvalue["connection_type"].title() + " - " + keyvalue["voice"])
     print()
 
     print("Parameters:")
@@ -435,8 +458,7 @@ def printConnections():
                 for subc in connection:
                     # print(connection)
                     if subc["connection_type"] == ctype_name:
-                        print(module.title(
-                        ) + " > " + subc["input_module"].title() + " (" + subc["input_port"].title() + ") ")
+                        print(module.title() + " > " + moduleAndPort(subc["input_module"], subc["input_port"]) + " ")
         print()
 
 
@@ -479,14 +501,13 @@ def graphviz():
     for module in sorted(mainDict["modules"]):
         # Get all outgoing connections:
         outputs = mainDict["modules"][module]["connections"]["out"]
-        module_outputs = ""
-        out_count = 0
+        # Unlabeled ports get no record field; their edges attach to the
+        # module as a whole.
+        module_outputs = " | ".join(
+            "<_" + re.sub('[^A-Za-z0-9]+', '', out) + "> " + out.upper()
+            for out in sorted(outputs) if isLabeledPort(out))
         for out in sorted(outputs):
-            out_count += 1
-            out_formatted = "_" + re.sub('[^A-Za-z0-9]+', '', out)
-            module_outputs += "<" + out_formatted + "> " + out.upper()
-            if out_count < len(outputs.keys()):
-                module_outputs += " | "
+            out_formatted = ":_" + re.sub('[^A-Za-z0-9]+', '', out) if isLabeledPort(out) else ""
             connections = outputs[out]
             for c in connections:
                 line_style_array = []
@@ -502,23 +523,18 @@ def graphviz():
                     line_style = "[" + ', '.join(line_style_array) + "]"
                 else:
                     line_style = ""
-                in_formatted = "_" + \
-                    re.sub('[^A-Za-z0-9]+', '', c["input_port"])
-                connection_line = re.sub(graphVizRemoveChars, "", module) + ":" + out_formatted + from_token + \
+                in_formatted = ":_" + re.sub('[^A-Za-z0-9]+', '', c["input_port"]) \
+                    if isLabeledPort(c["input_port"]) else ""
+                connection_line = re.sub(graphVizRemoveChars, "", module) + out_formatted + from_token + \
                     re.sub(graphVizRemoveChars, "", c["input_module"]) + \
-                    ":" + in_formatted + to_token + line_style
+                    in_formatted + to_token + line_style
                 conn.append([c["input_port"], connection_line])
 
         # Get all incoming connections:
         inputs = mainDict["modules"][module]["connections"]["in"]
-        module_inputs = ""
-        in_count = 0
-        for inp in sorted(inputs):
-            inp_formatted = "_" + re.sub('[^A-Za-z0-9]+', '', inp)
-            in_count += 1
-            module_inputs += "<" + inp_formatted + "> " + inp.upper()
-            if in_count < len(inputs.keys()):
-                module_inputs += " | "
+        module_inputs = " | ".join(
+            "<_" + re.sub('[^A-Za-z0-9]+', '', inp) + "> " + inp.upper()
+            for inp in sorted(inputs) if isLabeledPort(inp))
 
         # Get all parameters:
         params = mainDict["modules"][module]["parameters"]
@@ -657,18 +673,37 @@ def d2():
     def node_id(module):
         return re.sub(r'[^A-Za-z0-9_]', "", module)
 
-    # Build a module's label (uppercase name + parameters)
-    def module_label(module):
-        label = module.upper()
+    def escape(text):
+        return text.replace("\\", "\\\\").replace('"', '\\"')
+
+    # A module without parameters is a plain box labelled with its uppercase
+    # name. One with parameters becomes a one-cell grid container: the name
+    # sits on top and the parameters fill the cell in a smaller monospace font
+    # (a single D2 label can only have one font and size). With no grid gap the
+    # cell is flush with the container, so its top edge separates the two.
+    def module_node(module):
+        name = escape(module.upper())
         params = modules[module]["parameters"]
-        if params:
-            param_str = "\\n" + "\\n".join([f"{par}: {params[par]}" for par in sorted(params)])
-            label += param_str
-        return label
+        if not params:
+            return f'{node_id(module)}: "{name}"'
+        param_str = "\\n".join(f"{escape(par)}: {escape(params[par])}" for par in sorted(params))
+        return (f'{node_id(module)}: {{\n'
+                f'  label: "{name}"\n'
+                f'  label.near: top-center\n'
+                f'  style.font-size: 16\n'
+                f'  style.bold: true\n'
+                f'  grid-columns: 1\n'
+                f'  grid-gap: 0\n'
+                f'  params: "{param_str}" {{\n'
+                f'    style.font: mono\n'
+                f'    style.font-size: 12\n'
+                f'    style.bold: false\n'
+                f'  }}\n'
+                f'}}')
 
     # Emit modules in topological order
     for module in sorted_modules:
-        node_def = f'{node_id(module)}: "{module_label(module)}"'
+        node_def = module_node(module)
         print(node_def)
         total_string += node_def + "\n"
 
@@ -695,7 +730,13 @@ def d2():
                 if style_parts:
                     style_str = "\n    " + "\n    ".join(style_parts)
 
-                connection_line = f"{from_node} -> {to_node} {{\n    source-arrowhead.label: {out}\n    target-arrowhead.label: {c['input_port']}{style_str}\n  }}"
+                labels = ""
+                if out:
+                    labels += f"\n    source-arrowhead.label: {out}"
+                if c["input_port"]:
+                    labels += f"\n    target-arrowhead.label: {c['input_port']}"
+
+                connection_line = f"{from_node} -> {to_node} {{{labels}{style_str}\n  }}"
                 conn.append((c["id"], connection_line))
 
     # Sort connections by their original ID (source file order)

@@ -28,6 +28,19 @@ Diagrams flow left-to-right by default, but switch to top-to-bottom at 10 or
 more modules, where left-to-right gets unmanageably wide. **-dir DN** forces
 top-to-bottom regardless of size.
 
+## Added: optional port labels
+
+Either port of a connection may be left out, giving an unlabeled end in the
+diagram:
+
+```
+- Sequencer p> Oscillator
+- LFO >> Oscillator (PWM)
+```
+
+In the D2 output the arrowhead gets no label; in the Graphviz output the edge
+attaches to the module as a whole rather than to a port field.
+
 ## Fixed: parser bugs
 
 - **The last connection of a file with no trailing newline was silently
